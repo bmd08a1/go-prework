@@ -8,6 +8,12 @@ import (
 	"regexp"
 )
 
+type inputData struct {
+	num_requests      int64
+	concurrency_level int64
+	link              string
+}
+
 type summaryInfo struct {
 	hostname          string
 	port              string
@@ -17,69 +23,31 @@ type summaryInfo struct {
 	success_requests  int64
 }
 
+var userInput inputData
+var summary summaryInfo
+
 func main() {
+	initialize()
+	collectInput()
+	extractServerInfo()
+
+	fmt.Printf("Running benchmark on %v\n", userInput.link)
+
+	sendRequests(userInput.num_requests)
+
+	printReport()
+}
+
+func initialize() {
 	flag.Usage = func() {
 		fmt.Println("Usage: mb [options] [http[s]://]hostname[:port]/path")
 		fmt.Println("Options are:")
 		flag.PrintDefaults()
 	}
-	num_requests, concurrency_level, link := collectInput()
-	hostname, port, path := extractServerInfo(link)
-
-	summary := summaryInfo{
-		hostname,
-		port,
-		path,
-		concurrency_level,
-		0,
-		0,
-	}
-
-	fmt.Printf("Running benchmark on %v\n", link)
-
-	for summary.requests < num_requests {
-		summary.requests++
-		response, _ := http.Get(link)
-		if response.StatusCode >= 200 && response.StatusCode < 400 {
-			summary.success_requests++
-		}
-	}
-
-	fmt.Println("\nSummary:")
-	fmt.Printf("Server Hostname: %v\n", summary.hostname)
-	fmt.Printf("Server Port: %v\n", summary.port)
-	fmt.Printf("Document Path: %v\n", summary.path)
-	fmt.Printf("Concurrency Level: %v\n", summary.concurrency_level)
+	summary = summaryInfo{"", "", "", 0, 0, 0}
 }
 
-func extractServerInfo(link string) (hostname string, port string, path string) {
-	url_regex := regexp.MustCompile(`(?P<protocol>http|https):\/\/(?P<hostname>[\w\.\-_]+):?(?P<port>\d*)(?P<path>[\w\W]*)`)
-	subMatches := url_regex.FindStringSubmatch(link)
-
-	serverInfo := make(map[string]string)
-
-	for i, name := range url_regex.SubexpNames() {
-		if i != 0 && name != "" {
-			serverInfo[name] = subMatches[i]
-		}
-	}
-
-	hostname = serverInfo["hostname"]
-	if serverInfo["port"] != "" {
-		port = serverInfo["port"]
-	} else {
-		if serverInfo["protocol"] == "http" {
-			port = "80"
-		} else {
-			port = "443"
-		}
-	}
-	path = serverInfo["path"]
-
-	return
-}
-
-func collectInput() (int64, int64, string) {
+func collectInput() {
 	num_requests := flag.Int64("n", 1, "Number of requests to perform")
 	concurrency_level := flag.Int64("c", 1, "Number of multiple requests to make at a time")
 	flag.Parse()
@@ -102,12 +70,60 @@ func collectInput() (int64, int64, string) {
 	}
 
 	link := flag.Args()[0]
-	url_regex, _ := regexp.Compile(`(http|https):\/\/([\w\.\-_]+):?(\d?)[\w\W]*`)
+	url_regex, _ := regexp.Compile(`(http|https):\/\/([\w\.\-_]+):?(\d*)[\w\W]*`)
 	if url_regex.FindString(link) == "" {
 		fmt.Printf("invalid value '%v': must be a valid URI\n", link)
 		flag.Usage()
 		os.Exit(1)
 	}
 
-	return *num_requests, *concurrency_level, link
+	userInput = inputData{
+		*num_requests,
+		*concurrency_level,
+		link,
+	}
+}
+
+func extractServerInfo() {
+	regex_string := `(?P<protocol>http|https):\/\/(?P<hostname>[\w\.\-_]+):?(?P<port>\d*)(?P<path>[\w\W]*)`
+	url_regex := regexp.MustCompile(regex_string)
+	subMatches := url_regex.FindStringSubmatch(userInput.link)
+
+	serverInfo := make(map[string]string)
+
+	for i, name := range url_regex.SubexpNames() {
+		if i != 0 && name != "" {
+			serverInfo[name] = subMatches[i]
+		}
+	}
+
+	summary.hostname = serverInfo["hostname"]
+	if serverInfo["port"] != "" {
+		summary.port = serverInfo["port"]
+	} else {
+		if serverInfo["protocol"] == "http" {
+			summary.port = "80"
+		} else {
+			summary.port = "443"
+		}
+	}
+	summary.path = serverInfo["path"]
+}
+
+func sendRequests(num_requests int64) {
+	for summary.requests < num_requests {
+		summary.requests++
+		response, _ := http.Get(userInput.link)
+		if response.StatusCode >= 200 && response.StatusCode < 400 {
+			summary.success_requests++
+		}
+	}
+}
+
+func printReport() {
+	fmt.Println("\nSummary:")
+	fmt.Printf("Server Hostname: %v\n", summary.hostname)
+	fmt.Printf("Server Port: %v\n", summary.port)
+	fmt.Printf("Document Path: %v\n", summary.path)
+	fmt.Printf("Concurrency Level: %v\n", summary.concurrency_level)
 }
