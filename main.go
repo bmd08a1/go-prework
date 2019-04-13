@@ -19,6 +19,7 @@ type summaryInfo struct {
 	hostname           string
 	port               string
 	path               string
+	totalTransferred   int64
 	concurrency_level  int64
 	requests           int64
 	succeeded_requests int64
@@ -27,8 +28,9 @@ type summaryInfo struct {
 }
 
 type responseInfo struct {
-	succeeded bool
-	duration  float64
+	succeeded     bool
+	duration      float64
+	contentLength int64
 }
 
 var userInput inputData
@@ -53,7 +55,7 @@ func initialize() {
 		fmt.Println("Options are:")
 		flag.PrintDefaults()
 	}
-	summary = summaryInfo{"", "", "", 0, 0, 0, 0, 0}
+	summary = summaryInfo{"", "", "", 0, 0, 0, 0, 0, 0}
 	start = time.Now()
 }
 
@@ -139,6 +141,7 @@ func sendRequests(resultChannel chan responseInfo) {
 		resultChannel <- responseInfo{
 			response.StatusCode >= 200 && response.StatusCode < 400,
 			time.Now().Sub(requestStartAt).Seconds(),
+			response.ContentLength,
 		}
 	}
 }
@@ -150,6 +153,7 @@ func combineResult(resultChannel chan responseInfo) {
 		}
 
 		summary.requestsTime += result.duration
+		summary.totalTransferred += result.contentLength
 
 		if summary.requests == userInput.num_requests {
 			close(resultChannel)
@@ -162,8 +166,8 @@ func printReport() {
 	fmt.Println("\nSummary:")
 	fmt.Printf("Server Hostname: %v\n", summary.hostname)
 	fmt.Printf("Server Port: %v\n\n", summary.port)
-	fmt.Printf("Document Path: %v\n\n", summary.path)
-	fmt.Printf("Document Length: %v\n\n", summary.path)
+	fmt.Printf("Document Path: %v\n", summary.path)
+	fmt.Printf("Document Length: %v (bytes)\n\n", summary.totalTransferred/summary.requests)
 	fmt.Printf("Concurrency Level: %v\n", summary.concurrency_level)
 	fmt.Printf("Requests sent: %v\n", summary.requests)
 	fmt.Printf("Complete requests: %v\n", summary.succeeded_requests)
@@ -171,4 +175,6 @@ func printReport() {
 	fmt.Printf("Time taken for tests: %.2f (s)\n", summary.totalTime)
 	fmt.Printf("Requests per second: %.2f (requests/s)\n", float64(summary.requests)/summary.totalTime)
 	fmt.Printf("Time per requests: %.2f (s)\n", summary.requestsTime/float64(summary.requests))
+	fmt.Printf("Total transferred: %v (bytes)\n", summary.totalTransferred)
+	fmt.Printf("Transfer rate: %.2f (s)\n", float64(summary.totalTransferred)/float64(summary.requests))
 }
