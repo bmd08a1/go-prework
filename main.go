@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"regexp"
+	"time"
 )
 
 type inputData struct {
@@ -15,25 +16,33 @@ type inputData struct {
 }
 
 type summaryInfo struct {
-	hostname          string
-	port              string
-	path              string
-	concurrency_level int64
-	requests          int64
-	success_requests  int64
+	hostname           string
+	port               string
+	path               string
+	concurrency_level  int64
+	requests           int64
+	succeeded_requests int64
+	totalTime          float64
+	requestsTime       float64
+}
+
+type responseInfo struct {
+	succeeded bool
+	duration  float64
 }
 
 var userInput inputData
 var summary summaryInfo
+var start time.Time
 
 func main() {
 	initialize()
 	collectInput()
 	extractServerInfo()
 
-	fmt.Printf("Running benchmark on %v\n", userInput.link)
-
-	sendRequests(userInput.num_requests)
+	resultChannel := make(chan responseInfo, userInput.num_requests)
+	doBenchMark(resultChannel)
+	combineResult(resultChannel)
 
 	printReport()
 }
@@ -44,7 +53,8 @@ func initialize() {
 		fmt.Println("Options are:")
 		flag.PrintDefaults()
 	}
-	summary = summaryInfo{"", "", "", 0, 0, 0}
+	summary = summaryInfo{"", "", "", 0, 0, 0, 0, 0}
+	start = time.Now()
 }
 
 func collectInput() {
@@ -82,6 +92,7 @@ func collectInput() {
 		*concurrency_level,
 		link,
 	}
+	summary.concurrency_level = userInput.concurrency_level
 }
 
 func extractServerInfo() {
@@ -110,12 +121,39 @@ func extractServerInfo() {
 	summary.path = serverInfo["path"]
 }
 
-func sendRequests(num_requests int64) {
-	for summary.requests < num_requests {
-		summary.requests++
+func doBenchMark(resultChannel chan responseInfo) {
+	fmt.Printf("Running benchmark on %v\n", userInput.link)
+
+	for i := int64(0); i < userInput.concurrency_level; i++ {
+		go sendRequests(resultChannel)
+	}
+}
+
+func sendRequests(resultChannel chan responseInfo) {
+	for summary.requests < userInput.num_requests {
+		requestStartAt := time.Now()
+
 		response, _ := http.Get(userInput.link)
-		if response.StatusCode >= 200 && response.StatusCode < 400 {
-			summary.success_requests++
+		summary.requests++
+
+		resultChannel <- responseInfo{
+			response.StatusCode >= 200 && response.StatusCode < 400,
+			time.Now().Sub(requestStartAt).Seconds(),
+		}
+	}
+}
+
+func combineResult(resultChannel chan responseInfo) {
+	for result := range resultChannel {
+		if result.succeeded {
+			summary.succeeded_requests++
+		}
+
+		summary.requestsTime += result.duration
+
+		if summary.requests == userInput.num_requests {
+			close(resultChannel)
+			summary.totalTime = time.Now().Sub(start).Seconds()
 		}
 	}
 }
@@ -123,7 +161,14 @@ func sendRequests(num_requests int64) {
 func printReport() {
 	fmt.Println("\nSummary:")
 	fmt.Printf("Server Hostname: %v\n", summary.hostname)
-	fmt.Printf("Server Port: %v\n", summary.port)
-	fmt.Printf("Document Path: %v\n", summary.path)
+	fmt.Printf("Server Port: %v\n\n", summary.port)
+	fmt.Printf("Document Path: %v\n\n", summary.path)
+	fmt.Printf("Document Length: %v\n\n", summary.path)
 	fmt.Printf("Concurrency Level: %v\n", summary.concurrency_level)
+	fmt.Printf("Requests sent: %v\n", summary.requests)
+	fmt.Printf("Complete requests: %v\n", summary.succeeded_requests)
+	fmt.Printf("Failed requests: %v\n", summary.requests-summary.succeeded_requests)
+	fmt.Printf("Time taken for tests: %.2f (s)\n", summary.totalTime)
+	fmt.Printf("Requests per second: %.2f (requests/s)\n", float64(summary.requests)/summary.totalTime)
+	fmt.Printf("Time per requests: %.2f (s)\n", summary.requestsTime/float64(summary.requests))
 }
